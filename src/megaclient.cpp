@@ -20,6 +20,7 @@
  */
 
 #include "mega.h"
+#include "mega/mediafileattribute.h"
 
 namespace mega {
 
@@ -4019,11 +4020,14 @@ void MegaClient::pendingattrstring(handle h, string* fa)
     for (fa_map::iterator it = pendingfa.lower_bound(pair<handle, fatype>(h, 0));
          it != pendingfa.end() && it->first.first == h; )
     {
-        sprintf(buf, "/%u*", (unsigned)it->first.second);
-        Base64::btoa((byte*)&it->second.first, sizeof(it->second.first), strchr(buf + 3, 0));
+        if (it->first.second != fa_media)
+        {
+            sprintf(buf, "/%u*", (unsigned)it->first.second);
+            Base64::btoa((byte*)&it->second.first, sizeof(it->second.first), strchr(buf + 3, 0));
+            fa->append(buf + !fa->size());
+            LOG_debug << "Added file attribute to putnodes. Remaining: " << pendingfa.size()-1;
+        }
         pendingfa.erase(it++);
-        fa->append(buf + !fa->size());
-        LOG_debug << "Added file attribute to putnodes. Remaining: " << pendingfa.size();
     }
 }
 
@@ -11456,6 +11460,10 @@ bool MegaClient::startxfer(direction_t d, File* f, bool skipdupes)
                 LOG_err << "Unable to get a fingerprint " << f->name;
                 return false;
             }
+
+            #ifdef USE_MEDIAINFO
+            mediaFileInfo.requestCodecMappingsOneTime(this, &f->localname);  
+            #endif
         }
         else
         {

@@ -139,6 +139,9 @@ struct MEGA_API Transfer : public FileFingerprint
 
     // unserialize a Transfer and add it to the transfer map
     static Transfer* unserialize(MegaClient *, string*, transfer_map *);
+
+private:
+    void addAnyMissingMediaFileAttributes(Node* node, std::string& localpath);
 };
 
 class MEGA_API TransferList

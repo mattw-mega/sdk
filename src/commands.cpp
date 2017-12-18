@@ -29,6 +29,7 @@
 #include "mega/utils.h"
 #include "mega/user.h"
 #include "mega.h"
+#include "mega/mediafileattribute.h"
 
 namespace mega {
 HttpReqCommandPutFA::HttpReqCommandPutFA(MegaClient* client, handle cth, fatype ctype, string* cdata, bool checkAccess)
@@ -284,6 +285,31 @@ void CommandAttachFA::procresult()
 
     client->app->putfa_result(h, type, e);
 }
+
+
+CommandAttachFADirect::CommandAttachFADirect(handle nh, const char* attribs)
+{
+    cmd("pfa");
+    arg("n", (byte*)&nh, MegaClient::NODEHANDLE);
+    arg("fa", attribs);
+
+    h = nh;
+}
+
+void CommandAttachFADirect::procresult()
+{
+    if (client->json.isnumeric())
+    {
+        LOG_err << "pfa result: " << client->json.getint();
+    }
+    else
+    {
+        string fa;
+        client->json.storeobject(&fa);
+    }
+}
+
+
 
 // request upload target URL
 CommandPutFile::CommandPutFile(MegaClient* client, TransferSlot* ctslot, int ms)
@@ -869,6 +895,10 @@ CommandPutNodes::CommandPutNodes(MegaClient* client, handle th,
                 string s;
 
                 client->pendingattrstring(nn[i].uploadhandle, &s);
+
+                #ifdef USE_MEDIAINFO
+                client->mediaFileInfo.addUploadMediaFileAttributes(th, &s);
+                #endif              
 
                 if (s.size())
                 {
@@ -5514,6 +5544,32 @@ void CommandGetWelcomePDF::procresult()
                 break;
         }
     }
+}
+
+
+CommandMediaCodecs::CommandMediaCodecs(MegaClient* c, Callback cb)
+{
+    cmd("mc");
+
+    tag = c->reqtag;
+
+    client = c;
+    callback = cb;
+}
+
+void CommandMediaCodecs::procresult()
+{
+    unsigned version = 0;
+    if (client->json.isnumeric())
+    {
+        m_off_t result = client->json.getint();
+        if (result < 0)
+        {
+            LOG_err << "mc result: " << result;
+        }
+        version = unsigned(result);
+    }
+    callback(client, version);
 }
 
 } // namespace

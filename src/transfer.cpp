@@ -26,6 +26,7 @@
 #include "mega/sync.h"
 #include "mega/logging.h"
 #include "mega/base64.h"
+#include "mega/mediafileattribute.h"
 #include "megawaiter.h"
 
 namespace mega {
@@ -433,6 +434,49 @@ void Transfer::failed(error e, dstime timeleft)
     }
 }
 
+
+static uint32_t* fileAttributeKeyPtr(byte filekey[FILENODEKEYLENGTH])
+{
+    // returns the last half, beyond the actual key, ie the nonce+crc
+    return (uint32_t*)(filekey + FILENODEKEYLENGTH / 2);
+}
+
+
+void Transfer::addAnyMissingMediaFileAttributes(Node* node, /*const*/ std::string& localpath)
+{
+#ifdef USE_MEDIAINFO
+    char ext[8];
+    if (node && ((type == PUT) || node->nodekey.size() == FILENODEKEYLENGTH) &&
+        client->fsaccess->getextension(&localpath, ext, sizeof(ext)) &&
+        MediaProperties::isMediaFilenameExt(ext) &&
+        !client->mediaFileInfo.mediaCodecsFailed)
+    {
+        // for upload, the key is in the transfer.  for download, the key is in the node.
+        uint32_t* attrKey = fileAttributeKeyPtr((type == PUT) ? filekey : (byte*)node->nodekey.data());
+
+        if (!node->hasfileattribute(8) || client->mediaFileInfo.timeToRetryMediaPropertyExtraction(node->fileattrstring, attrKey))
+        {
+            // if we don't have the codec id mappings yet, send the request
+            client->mediaFileInfo.requestCodecMappingsOneTime(client, NULL);
+
+            // always get the attribute string; it may indicate this version of the mediaInfo library was unable to interpret the file
+            MediaProperties vp;
+            vp.extractMediaPropertyFileAttributes(localpath, client->fsaccess);
+
+            client->mediaFileInfo.sendOrQueueMediaPropertiesFileAttributes(node->nodehandle, vp, attrKey, client, (type == PUT) ? &uploadhandle : NULL);
+            if ((type == PUT))
+            {
+                minfa += 1;  // ensure we keep the transfer till the media file properties are ready (we may need to wait for the codec mappings)
+            }
+        }
+    }
+#else
+    node;
+    localpath;
+#endif
+}
+
+
 // transfer completion: copy received file locally, set timestamp(s), verify
 // fingerprint, notify app, notify files
 void Transfer::complete()
@@ -712,6 +756,16 @@ void Transfer::complete()
                         tmplocalname = localname;
                         success = true;
                     }
+
+                    // Add video file attributes for video files that don't have any yet.  Just for the first copy of this file.
+                    if (success)
+                    {
+                        Node* node = client->nodebyhandle((*it)->h);
+                        if (node)
+                        {
+                            addAnyMissingMediaFileAttributes(node, tmplocalname);
+                        }
+                    }
                 }
 
                 if (!success)
@@ -809,6 +863,7 @@ void Transfer::complete()
         LOG_debug << "Upload complete: " << (files.size() ? files.front()->name : "NO_FILES") << " " << files.size();
         delete slot->fa;
         slot->fa = NULL;
+        bool checked_media = false;
 
         // files must not change during a PUT transfer
         for (file_list::iterator it = files.begin(); it != files.end(); )
@@ -871,6 +926,14 @@ void Transfer::complete()
             }
             else
             {
+                Node* node = client->nodebyhandle((*it)->h);
+                if (!checked_media && node)
+                {
+                    // Add video file attributes for video files that don't have any yet.  Just for the first copy of this file.
+                    addAnyMissingMediaFileAttributes(node, *localpath);
+                    checked_media = true;
+                }
+
                 it++;
             }
             delete fa;
@@ -1197,7 +1260,7 @@ bool DirectReadSlot::doio()
             LOG_warn << "Bandwidth overquota from storage server for streaming transfer";
             if (req->timeleft > 0)
             {
-                backoff = req->timeleft * 10;
+                backoff = dstime(req->timeleft * 10);
             }
             else
             {
